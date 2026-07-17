@@ -1,0 +1,22 @@
+[Unit]
+Description=Go AI Assistant (Telegram and Discord)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bot
+Group=bot
+WorkingDirectory=/opt/go-ai-assistant
+EnvironmentFile=/opt/go-ai-assistant/.env
+ExecStart=/usr/local/bin/go-ai-assistant
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target

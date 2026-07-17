@@ -1,0 +1,55 @@
+# Секреты и локальная конфигурация.
+.env
+.env.*
+!.env.example
+
+# Скомпилированные Go-бинарники и сборки.
+bin/
+dist/
+build/
+*.exe
+*.test
+
+# Go vendoring. Удали эту строку, если решишь коммитить vendor.
+vendor/
+
+# Покрытие, профилирование и результаты тестов.
+coverage.out
+coverage.html
+*.coverprofile
+*.prof
+cpu.out
+mem.out
+
+# Логи и временные runtime-файлы.
+*.log
+*.pid
+tmp/
+temp/
+.cache/
+
+# macOS.
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows.
+Thumbs.db
+Desktop.ini
+
+# IDE и редакторы.
+.idea/
+.vscode/
+
+# Секретные ключи и локальные credentials.
+secrets/
+.secrets/
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account.json
+
+# Снимки проекта
+project-context.md

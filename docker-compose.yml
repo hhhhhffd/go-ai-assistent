@@ -1,0 +1,8 @@
+services:
+  assistant:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: go-ai-assistant
+    env_file:
+      - .env

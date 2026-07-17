@@ -6,7 +6,7 @@ func GlobalCommands() []ApplicationCommand {
 		InteractionContextBotDM,
 		InteractionContextPrivateChannel,
 	}
-	userInstall := []int{IntegrationTypeUserInstall}
+	guildInstall := []int{IntegrationTypeGuildInstall}
 
 	return []ApplicationCommand{
 		{
@@ -26,7 +26,7 @@ func GlobalCommands() []ApplicationCommand {
 					Description: "Показать ответ публично (по умолчанию приватно)",
 				},
 			},
-			IntegrationTypes: userInstall,
+			IntegrationTypes: guildInstall,
 			Contexts:         baseContexts,
 		},
 		{
@@ -46,14 +46,19 @@ func GlobalCommands() []ApplicationCommand {
 					Description: "Показать ответ публично (по умолчанию приватно)",
 				},
 			},
-			IntegrationTypes: userInstall,
+			IntegrationTypes: guildInstall,
 			Contexts:         baseContexts,
 		},
 		{
 			Name:             CommandExplain,
 			Type:             ApplicationCommandTypeMessage,
-			IntegrationTypes: userInstall,
+			IntegrationTypes: guildInstall,
 			Contexts:         baseContexts,
+		},
+		{
+			Name: "settings", Type: ApplicationCommandTypeChatInput,
+			Description: "Настройки бота (только owner)", IntegrationTypes: guildInstall, Contexts: baseContexts,
+			Options: []ApplicationCommandSchemaOption{{Type: ApplicationCommandOptionTypeString, Name: "command", Description: "например: set primary model gpt-4.1"}},
 		},
 	}
 }

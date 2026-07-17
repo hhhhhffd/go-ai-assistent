@@ -39,9 +39,10 @@ const (
 )
 
 const (
-	CommandAsk     = "ask"
-	CommandDeep    = "deep"
-	CommandExplain = "Объяснить"
+	CommandAsk      = "ask"
+	CommandDeep     = "deep"
+	CommandExplain  = "Объяснить"
+	CommandSettings = "settings"
 )
 
 const (

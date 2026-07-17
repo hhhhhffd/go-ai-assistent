@@ -1,0 +1,22 @@
+log_level: info
+
+ai:
+  system_prompt: "Ты краткий и точный ассистент. Отвечай по делу, структурно и без лишней воды."
+  deep_system_prompt: ""
+  max_output_tokens: 700
+  deep_max_output_tokens: 1800
+  temperature: 0.2
+  request_timeout: 30s
+
+telegram:
+  enabled: true
+  allowed_user_ids: []
+
+discord:
+  enabled: false
+  allowed_user_ids: []
+
+rate_limit:
+  per_user: 10
+  global: 60
+  window: 1m

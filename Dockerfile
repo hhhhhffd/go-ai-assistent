@@ -17,6 +17,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM gcr.io/distroless/static-debian12:nonroot
 
+WORKDIR /app
 COPY --from=builder /out/go-ai-assistant /usr/local/bin/go-ai-assistant
 
 ENTRYPOINT ["/usr/local/bin/go-ai-assistant"]

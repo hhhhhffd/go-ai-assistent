@@ -22,6 +22,11 @@ type InteractionClient interface {
 	CreateFollowupMessage(ctx context.Context, applicationID string, interactionToken string, payload FollowupMessageRequest) error
 }
 
+type GatewayInteractionClient interface {
+	InteractionClient
+	CreateInteractionResponse(ctx context.Context, interactionID string, interactionToken string, payload InteractionResponse) error
+}
+
 type APIClient struct {
 	baseURL    string
 	botToken   string
@@ -59,6 +64,11 @@ func (c *APIClient) EditOriginalInteractionResponse(ctx context.Context, applica
 
 func (c *APIClient) CreateFollowupMessage(ctx context.Context, applicationID string, interactionToken string, payload FollowupMessageRequest) error {
 	endpoint := fmt.Sprintf("%s/webhooks/%s/%s", c.baseURL, applicationID, interactionToken)
+	return c.doRequest(ctx, http.MethodPost, endpoint, false, payload, nil)
+}
+
+func (c *APIClient) CreateInteractionResponse(ctx context.Context, interactionID string, interactionToken string, payload InteractionResponse) error {
+	endpoint := fmt.Sprintf("%s/interactions/%s/%s/callback", c.baseURL, interactionID, interactionToken)
 	return c.doRequest(ctx, http.MethodPost, endpoint, false, payload, nil)
 }
 

@@ -6,3 +6,5 @@ services:
     container_name: go-ai-assistant
     env_file:
       - .env
+    volumes:
+      - ./:/app

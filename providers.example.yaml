@@ -1,0 +1,10 @@
+primary:
+  name: ""
+  api_key: ""
+  base_url: "https://api.openai.com/v1"
+  model: ""
+fallback:
+  name: ""
+  api_key: ""
+  base_url: ""
+  model: ""

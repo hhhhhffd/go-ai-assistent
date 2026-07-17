@@ -2,7 +2,7 @@ APP_NAME := go-ai-assistant
 GO_IMAGE ?= golang:1.25
 DOCKER_GO := docker run --rm -v $(PWD):/app -w /app $(GO_IMAGE)
 
-.PHONY: tidy fmt vet test test-race build check run compose-up compose-discord-up compose-down register-discord
+.PHONY: tidy fmt vet test test-race build check run compose-up compose-down register-discord
 
 tidy:
 	$(DOCKER_GO) sh -c "go mod tidy"
@@ -29,9 +29,6 @@ run:
 
 compose-up:
 	docker compose up -d --build
-
-compose-discord-up:
-	docker compose -f docker-compose.yml -f docker-compose.discord.yml up -d --build
 
 compose-down:
 	docker compose down

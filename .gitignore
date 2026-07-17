@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.example
+config.yaml
+providers.yaml
 
 # Скомпилированные Go-бинарники и сборки.
 bin/

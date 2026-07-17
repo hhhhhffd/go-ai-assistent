@@ -30,7 +30,10 @@ type Handler struct {
 	cfg       config.DiscordConfig
 	limiter   *ratelimit.Limiter
 	jobs      sync.WaitGroup
+	settings  SettingsExecutor
 }
+
+type SettingsExecutor interface{ Execute(input string) string }
 
 func NewHandler(
 	baseCtx context.Context,
@@ -40,11 +43,14 @@ func NewHandler(
 	logger *slog.Logger,
 	limiters ...*ratelimit.Limiter,
 ) (*Handler, error) {
-	verifier, err := NewSignatureVerifier(cfg.PublicKey)
-	if err != nil {
-		return nil, err
+	verifier := &SignatureVerifier{}
+	if strings.TrimSpace(cfg.PublicKey) != "" {
+		var err error
+		verifier, err = NewSignatureVerifier(cfg.PublicKey)
+		if err != nil {
+			return nil, err
+		}
 	}
-
 	var limiter *ratelimit.Limiter
 	if len(limiters) > 0 {
 		limiter = limiters[0]
@@ -59,6 +65,56 @@ func NewHandler(
 		cfg:       cfg,
 		limiter:   limiter,
 	}, nil
+}
+
+func (h *Handler) SetSettingsService(service SettingsExecutor) { h.settings = service }
+
+// PrepareGatewayInteraction creates the initial response for an interaction
+// received through Discord Gateway and starts deferred AI work when required.
+func (h *Handler) PrepareGatewayInteraction(interaction Interaction) (InteractionResponse, error) {
+	metrics.DiscordRequests.Add(1)
+	userID := interactionUserID(interaction)
+	if interaction.Data != nil && strings.EqualFold(interaction.Data.Name, CommandSettings) {
+		if userID != h.cfg.OwnerID {
+			return privateResponse("Настройки доступны только owner."), nil
+		}
+		if h.settings == nil {
+			return privateResponse("Сервис настроек недоступен."), nil
+		}
+		command := "/settings"
+		for _, option := range interaction.Data.Options {
+			if option.Name == "command" {
+				var value string
+				if err := json.Unmarshal(option.Value, &value); err == nil && strings.TrimSpace(value) != "" {
+					command += " " + value
+				}
+			}
+		}
+		return privateResponse(h.settings.Execute(command)), nil
+	}
+	if !h.isAllowedUser(userID) {
+		return privateResponse("У вас нет доступа к этому приложению."), nil
+	}
+	if h.limiter != nil && !h.limiter.Allow("discord:"+userID) {
+		metrics.RateLimitRejected.Add(1)
+		return privateResponse("Слишком много запросов. Попробуйте позже."), nil
+	}
+	request, publicRequested, err := parseAssistantRequest(interaction)
+	if err != nil {
+		return privateResponse(sanitizeDiscordText(err.Error())), nil
+	}
+	ephemeral := !publicRequested || !canPublic(interaction)
+	flags := 0
+	if ephemeral {
+		flags = MessageFlagEphemeral
+	}
+	h.jobs.Add(1)
+	go func() { defer h.jobs.Done(); h.processDeferredResponse(interaction, request, ephemeral, "") }()
+	return InteractionResponse{Type: InteractionCallbackTypeDeferredChannelMessageWithSource, Data: &InteractionCallbackData{Flags: flags}}, nil
+}
+
+func privateResponse(content string) InteractionResponse {
+	return InteractionResponse{Type: InteractionCallbackTypeChannelMessageWithSource, Data: &InteractionCallbackData{Content: content, Flags: MessageFlagEphemeral, AllowedMentions: safeAllowedMentions()}}
 }
 
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {

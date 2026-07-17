@@ -4,70 +4,68 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v2"
+)
+
+const (
+	DefaultConfigPath    = "config.yaml"
+	DefaultProvidersPath = "providers.yaml"
 )
 
 type ProviderConfig struct {
-	Name    string
-	APIKey  string
-	BaseURL string
-	Model   string
+	Name    string `yaml:"name"`
+	APIKey  string `yaml:"api_key"`
+	BaseURL string `yaml:"base_url"`
+	Model   string `yaml:"model"`
 }
-
+type ProvidersConfig struct {
+	Primary  ProviderConfig `yaml:"primary"`
+	Fallback ProviderConfig `yaml:"fallback"`
+}
 type AIConfig struct {
-	PrimaryProvider  ProviderConfig
-	FallbackProvider ProviderConfig
-
-	SystemPrompt        string
-	DeepSystemPrompt    string
-	MaxOutputTokens     int
-	DeepMaxOutputTokens int
-	Temperature         float64
+	PrimaryProvider     ProviderConfig
+	FallbackProvider    ProviderConfig
+	SystemPrompt        string  `yaml:"system_prompt"`
+	DeepSystemPrompt    string  `yaml:"deep_system_prompt"`
+	MaxOutputTokens     int     `yaml:"max_output_tokens"`
+	DeepMaxOutputTokens int     `yaml:"deep_max_output_tokens"`
+	Temperature         float64 `yaml:"temperature"`
 	RequestTimeout      time.Duration
 }
-
 type TelegramConfig struct {
-	Enabled        bool
+	Enabled        bool `yaml:"enabled"`
 	BotToken       string
 	APIID          int
 	APIHash        string
+	OwnerID        int64
 	AllowedUserIDs map[int64]struct{}
 }
-
 type DiscordConfig struct {
-	Enabled         bool
+	Enabled         bool `yaml:"enabled"`
 	ApplicationID   string
 	PublicKey       string
 	BotToken        string
+	OwnerID         string
 	AllowedUserIDs  map[string]struct{}
 	ProcessingLimit time.Duration
 }
-
-type HTTPConfig struct {
-	Addr          string
-	PublicBaseURL string
-}
-
 type RateLimitConfig struct {
-	PerUser int
-	Global  int
+	PerUser int `yaml:"per_user"`
+	Global  int `yaml:"global"`
 	Window  time.Duration
 }
-
 type Config struct {
-	LogLevel  string
-	AI        AIConfig
-	Telegram  TelegramConfig
-	Discord   DiscordConfig
-	HTTP      HTTPConfig
-	RateLimit RateLimitConfig
+	LogLevel  string          `yaml:"log_level"`
+	AI        AIConfig        `yaml:"ai"`
+	Telegram  TelegramConfig  `yaml:"telegram"`
+	Discord   DiscordConfig   `yaml:"discord"`
+	RateLimit RateLimitConfig `yaml:"rate_limit"`
 }
-
 type DiscordRegistrationConfig struct {
 	ApplicationID  string
 	BotToken       string
@@ -75,415 +73,348 @@ type DiscordRegistrationConfig struct {
 	LogLevel       string
 }
 
-func Load() (Config, error) {
-	_ = godotenv.Load()
-
-	cfg := Config{
-		LogLevel: strings.ToLower(envOrDefault("LOG_LEVEL", "info")),
-	}
-
-	telegramEnabled, err := resolveTelegramEnabled()
-	if err != nil {
-		return Config{}, err
-	}
-	discordEnabled, err := resolveDiscordEnabled()
-	if err != nil {
-		return Config{}, err
-	}
-
-	if !telegramEnabled && !discordEnabled {
-		return Config{}, errors.New("at least one platform must be enabled: TELEGRAM_ENABLED or DISCORD_ENABLED")
-	}
-
-	cfg.Telegram.Enabled = telegramEnabled
-	cfg.Discord.Enabled = discordEnabled
-
-	cfg.HTTP = HTTPConfig{
-		Addr:          envOrDefault("HTTP_ADDR", ":8080"),
-		PublicBaseURL: strings.TrimSpace(os.Getenv("PUBLIC_BASE_URL")),
-	}
-	cfg.RateLimit, err = loadRateLimitConfig()
-	if err != nil {
-		return Config{}, err
-	}
-
-	cfg.AI, err = loadAIConfig()
-	if err != nil {
-		return Config{}, err
-	}
-
-	if cfg.Telegram.Enabled {
-		cfg.Telegram, err = loadTelegramConfig()
-		if err != nil {
-			return Config{}, err
-		}
-	}
-
-	if cfg.Discord.Enabled {
-		cfg.Discord, err = loadDiscordConfig(cfg.AI.RequestTimeout)
-		if err != nil {
-			return Config{}, err
-		}
-
-		if strings.TrimSpace(cfg.HTTP.PublicBaseURL) == "" {
-			return Config{}, errors.New("PUBLIC_BASE_URL is required when DISCORD_ENABLED=true")
-		}
-	}
-
-	return cfg, nil
+type fileConfig struct {
+	LogLevel string `yaml:"log_level"`
+	AI       struct {
+		SystemPrompt        string  `yaml:"system_prompt"`
+		DeepSystemPrompt    string  `yaml:"deep_system_prompt"`
+		MaxOutputTokens     int     `yaml:"max_output_tokens"`
+		DeepMaxOutputTokens int     `yaml:"deep_max_output_tokens"`
+		Temperature         float64 `yaml:"temperature"`
+		RequestTimeout      string  `yaml:"request_timeout"`
+	} `yaml:"ai"`
+	Telegram struct {
+		Enabled        bool    `yaml:"enabled"`
+		AllowedUserIDs []int64 `yaml:"allowed_user_ids"`
+	} `yaml:"telegram"`
+	Discord struct {
+		Enabled        bool     `yaml:"enabled"`
+		AllowedUserIDs []string `yaml:"allowed_user_ids"`
+	} `yaml:"discord"`
+	RateLimit struct {
+		PerUser int    `yaml:"per_user"`
+		Global  int    `yaml:"global"`
+		Window  string `yaml:"window"`
+	} `yaml:"rate_limit"`
 }
 
-func loadRateLimitConfig() (RateLimitConfig, error) {
-	perUser, err := envInt("RATE_LIMIT_PER_USER", 10)
-	if err != nil || perUser <= 0 {
-		return RateLimitConfig{}, errors.New("RATE_LIMIT_PER_USER must be > 0")
+func Load() (Config, error) {
+	_ = godotenv.Load()
+	if err := EnsureFiles(); err != nil {
+		return Config{}, err
 	}
-	global, err := envInt("RATE_LIMIT_GLOBAL", 60)
-	if err != nil || global <= 0 {
-		return RateLimitConfig{}, errors.New("RATE_LIMIT_GLOBAL must be > 0")
-	}
-	window, err := envDuration("RATE_LIMIT_WINDOW", time.Minute)
+	file, err := readConfigFile(DefaultConfigPath)
 	if err != nil {
-		return RateLimitConfig{}, err
+		return Config{}, err
 	}
-	return RateLimitConfig{PerUser: perUser, Global: global, Window: window}, nil
+	providers, err := readProvidersFile(DefaultProvidersPath)
+	if err != nil {
+		return Config{}, err
+	}
+	return buildConfig(file, providers)
+}
+
+// EnsureFiles creates local editable configuration files on first startup.
+func EnsureFiles() error {
+	if _, err := os.Stat(DefaultConfigPath); errors.Is(err, os.ErrNotExist) {
+		data, marshalErr := yaml.Marshal(defaultFileConfig())
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if writeErr := writePrivateFile(DefaultConfigPath, data); writeErr != nil {
+			return fmt.Errorf("create %s: %w", DefaultConfigPath, writeErr)
+		}
+	} else if err != nil {
+		return fmt.Errorf("stat %s: %w", DefaultConfigPath, err)
+	}
+	if _, err := os.Stat(DefaultProvidersPath); errors.Is(err, os.ErrNotExist) {
+		data, marshalErr := yaml.Marshal(ProvidersConfig{})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if writeErr := writePrivateFile(DefaultProvidersPath, data); writeErr != nil {
+			return fmt.Errorf("create %s: %w", DefaultProvidersPath, writeErr)
+		}
+	} else if err != nil {
+		return fmt.Errorf("stat %s: %w", DefaultProvidersPath, err)
+	}
+	return nil
+}
+
+// SaveProviders persists provider credentials atomically. It must only be called
+// by authenticated owner-only settings flows.
+func SaveProviders(providers ProvidersConfig) error {
+	data, err := yaml.Marshal(providers)
+	if err != nil {
+		return fmt.Errorf("marshal providers: %w", err)
+	}
+	return writePrivateFile(DefaultProvidersPath, data)
+}
+
+// SaveConfig persists editable, non-bootstrap settings. Tokens and owner IDs
+// remain in .env and are intentionally never written here.
+func SaveConfig(cfg Config) error {
+	file := fileConfig{}
+	file.LogLevel = cfg.LogLevel
+	file.AI.SystemPrompt, file.AI.DeepSystemPrompt = cfg.AI.SystemPrompt, cfg.AI.DeepSystemPrompt
+	file.AI.MaxOutputTokens, file.AI.DeepMaxOutputTokens, file.AI.Temperature = cfg.AI.MaxOutputTokens, cfg.AI.DeepMaxOutputTokens, cfg.AI.Temperature
+	file.AI.RequestTimeout = cfg.AI.RequestTimeout.String()
+	file.Telegram.Enabled, file.Telegram.AllowedUserIDs = cfg.Telegram.Enabled, telegramIDsSlice(cfg.Telegram.AllowedUserIDs, cfg.Telegram.OwnerID)
+	file.Discord.Enabled, file.Discord.AllowedUserIDs = cfg.Discord.Enabled, discordIDsSlice(cfg.Discord.AllowedUserIDs, cfg.Discord.OwnerID)
+	file.RateLimit.PerUser, file.RateLimit.Global, file.RateLimit.Window = cfg.RateLimit.PerUser, cfg.RateLimit.Global, cfg.RateLimit.Window.String()
+	data, err := yaml.Marshal(file)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	return writePrivateFile(DefaultConfigPath, data)
+}
+
+func writePrivateFile(path string, data []byte) error {
+	temporary, err := os.CreateTemp(".", ".config-*")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(data); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
 }
 
 func LoadDiscordRegistrationConfig() (DiscordRegistrationConfig, error) {
-	_ = godotenv.Load()
-
-	applicationID, err := requireEnv("DISCORD_APPLICATION_ID")
+	cfg, err := Load()
 	if err != nil {
 		return DiscordRegistrationConfig{}, err
 	}
-
-	botToken, err := requireEnv("DISCORD_BOT_TOKEN")
-	if err != nil {
-		return DiscordRegistrationConfig{}, err
+	if !cfg.Discord.Enabled {
+		return DiscordRegistrationConfig{}, errors.New("discord is disabled in config.yaml")
 	}
-
-	requestTimeout, err := envDuration("REQUEST_TIMEOUT", 30*time.Second)
-	if err != nil {
-		return DiscordRegistrationConfig{}, err
-	}
-
-	return DiscordRegistrationConfig{
-		ApplicationID:  applicationID,
-		BotToken:       botToken,
-		RequestTimeout: requestTimeout,
-		LogLevel:       strings.ToLower(envOrDefault("LOG_LEVEL", "info")),
-	}, nil
+	return DiscordRegistrationConfig{ApplicationID: cfg.Discord.ApplicationID, BotToken: cfg.Discord.BotToken, RequestTimeout: cfg.AI.RequestTimeout, LogLevel: cfg.LogLevel}, nil
 }
 
-func loadAIConfig() (AIConfig, error) {
-	primaryProvider, err := loadProvider("PRIMARY")
+func readConfigFile(path string) (fileConfig, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return defaultFileConfig(), nil
+	}
 	if err != nil {
-		return AIConfig{}, err
+		return fileConfig{}, fmt.Errorf("read %s: %w", path, err)
 	}
-
-	fallbackProvider, err := loadProvider("FALLBACK")
-	if err != nil {
-		return AIConfig{}, err
+	var cfg fileConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return fileConfig{}, fmt.Errorf("parse %s: %w", path, err)
 	}
-
-	maxOutputTokens, err := envInt("MAX_OUTPUT_TOKENS", 700)
-	if err != nil {
-		return AIConfig{}, err
-	}
-	if maxOutputTokens <= 0 {
-		return AIConfig{}, errors.New("MAX_OUTPUT_TOKENS must be > 0")
-	}
-
-	deepMaxOutputTokens, err := envInt("DEEP_MAX_OUTPUT_TOKENS", 1800)
-	if err != nil {
-		return AIConfig{}, err
-	}
-	if deepMaxOutputTokens <= 0 {
-		return AIConfig{}, errors.New("DEEP_MAX_OUTPUT_TOKENS must be > 0")
-	}
-
-	temperature, err := envFloat("TEMPERATURE", 0.2)
-	if err != nil {
-		return AIConfig{}, err
-	}
-	if temperature < 0 || temperature > 2 {
-		return AIConfig{}, errors.New("TEMPERATURE must be between 0 and 2")
-	}
-
-	requestTimeout, err := envDuration("REQUEST_TIMEOUT", 30*time.Second)
-	if err != nil {
-		return AIConfig{}, err
-	}
-	if requestTimeout <= 0 {
-		return AIConfig{}, errors.New("REQUEST_TIMEOUT must be > 0")
-	}
-
-	systemPrompt := envOrDefault(
-		"SYSTEM_PROMPT",
-		"Ты краткий и точный ассистент. Отвечай по делу, структурно и без лишней воды.",
-	)
-	if strings.TrimSpace(systemPrompt) == "" {
-		return AIConfig{}, errors.New("SYSTEM_PROMPT must not be empty")
-	}
-
-	return AIConfig{
-		PrimaryProvider:     primaryProvider,
-		FallbackProvider:    fallbackProvider,
-		SystemPrompt:        systemPrompt,
-		DeepSystemPrompt:    strings.TrimSpace(os.Getenv("DEEP_SYSTEM_PROMPT")),
-		MaxOutputTokens:     maxOutputTokens,
-		DeepMaxOutputTokens: deepMaxOutputTokens,
-		Temperature:         temperature,
-		RequestTimeout:      requestTimeout,
-	}, nil
+	return cfg, nil
 }
 
-func loadTelegramConfig() (TelegramConfig, error) {
-	apiID, err := envInt("TELEGRAM_API_ID", 0)
-	if err != nil || apiID <= 0 {
-		return TelegramConfig{}, errors.New("TELEGRAM_API_ID must be a positive integer when TELEGRAM_ENABLED=true")
+func readProvidersFile(path string) (ProvidersConfig, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return ProvidersConfig{}, nil
 	}
-	apiHash, err := requireEnv("TELEGRAM_API_HASH")
 	if err != nil {
-		return TelegramConfig{}, err
+		return ProvidersConfig{}, fmt.Errorf("read %s: %w", path, err)
 	}
-
-	botToken := firstNonEmpty("TELEGRAM_BOT_TOKEN", "BOT_TOKEN")
-	if strings.TrimSpace(botToken) == "" {
-		return TelegramConfig{}, errors.New("TELEGRAM_BOT_TOKEN is required when TELEGRAM_ENABLED=true (BOT_TOKEN is accepted for backward compatibility)")
+	var cfg ProvidersConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return ProvidersConfig{}, fmt.Errorf("parse %s: %w", path, err)
 	}
-
-	allowlistRaw := firstNonEmpty("ALLOWED_TELEGRAM_USER_IDS", "ALLOWED_USER_IDS")
-	if strings.TrimSpace(allowlistRaw) == "" {
-		return TelegramConfig{}, errors.New("ALLOWED_TELEGRAM_USER_IDS is required when TELEGRAM_ENABLED=true (ALLOWED_USER_IDS is accepted for backward compatibility)")
-	}
-
-	allowedIDs, err := parseTelegramAllowlist(allowlistRaw)
-	if err != nil {
-		return TelegramConfig{}, fmt.Errorf("parse telegram allowlist: %w", err)
-	}
-
-	return TelegramConfig{
-		Enabled:        true,
-		BotToken:       strings.TrimSpace(botToken),
-		APIID:          apiID,
-		APIHash:        strings.TrimSpace(apiHash),
-		AllowedUserIDs: allowedIDs,
-	}, nil
+	return cfg, nil
 }
 
-func loadDiscordConfig(defaultTimeout time.Duration) (DiscordConfig, error) {
-	applicationID, err := requireEnv("DISCORD_APPLICATION_ID")
+func buildConfig(file fileConfig, providers ProvidersConfig) (Config, error) {
+	timeout, err := parseDuration(file.AI.RequestTimeout, 30*time.Second)
 	if err != nil {
-		return DiscordConfig{}, err
+		return Config{}, fmt.Errorf("ai.request_timeout: %w", err)
 	}
-
-	publicKey, err := requireEnv("DISCORD_PUBLIC_KEY")
+	window, err := parseDuration(file.RateLimit.Window, time.Minute)
 	if err != nil {
-		return DiscordConfig{}, err
+		return Config{}, fmt.Errorf("rate_limit.window: %w", err)
 	}
-
-	allowlistRaw, err := requireEnv("ALLOWED_DISCORD_USER_IDS")
-	if err != nil {
-		return DiscordConfig{}, err
+	cfg := Config{LogLevel: defaultString(file.LogLevel, "info"), AI: AIConfig{PrimaryProvider: providers.Primary, FallbackProvider: providers.Fallback, SystemPrompt: defaultString(file.AI.SystemPrompt, "Ты краткий и точный ассистент. Отвечай по делу, структурно и без лишней воды."), DeepSystemPrompt: file.AI.DeepSystemPrompt, MaxOutputTokens: defaultInt(file.AI.MaxOutputTokens, 700), DeepMaxOutputTokens: defaultInt(file.AI.DeepMaxOutputTokens, 1800), Temperature: file.AI.Temperature, RequestTimeout: timeout}, RateLimit: RateLimitConfig{PerUser: defaultInt(file.RateLimit.PerUser, 10), Global: defaultInt(file.RateLimit.Global, 60), Window: window}}
+	if cfg.AI.MaxOutputTokens <= 0 || cfg.AI.DeepMaxOutputTokens <= 0 || cfg.RateLimit.PerUser <= 0 || cfg.RateLimit.Global <= 0 || cfg.AI.Temperature < 0 || cfg.AI.Temperature > 2 {
+		return Config{}, errors.New("invalid numeric value in config.yaml")
 	}
-
-	allowedIDs, err := parseDiscordAllowlist(allowlistRaw)
-	if err != nil {
-		return DiscordConfig{}, fmt.Errorf("parse discord allowlist: %w", err)
-	}
-
-	processingLimit := defaultTimeout*2 + 5*time.Second
-	if processingLimit < 20*time.Second {
-		processingLimit = 20 * time.Second
-	}
-
-	return DiscordConfig{
-		Enabled:         true,
-		ApplicationID:   strings.TrimSpace(applicationID),
-		PublicKey:       strings.TrimSpace(publicKey),
-		BotToken:        strings.TrimSpace(os.Getenv("DISCORD_BOT_TOKEN")),
-		AllowedUserIDs:  allowedIDs,
-		ProcessingLimit: processingLimit,
-	}, nil
-}
-
-func loadProvider(prefix string) (ProviderConfig, error) {
-	name := envOrDefault(prefix+"_PROVIDER", strings.ToLower(prefix))
-
-	apiKey, err := requireEnv(prefix + "_API_KEY")
-	if err != nil {
-		return ProviderConfig{}, err
-	}
-
-	baseURL, err := requireEnv(prefix + "_BASE_URL")
-	if err != nil {
-		return ProviderConfig{}, err
-	}
-
-	model, err := requireEnv(prefix + "_MODEL")
-	if err != nil {
-		return ProviderConfig{}, err
-	}
-
-	return ProviderConfig{
-		Name:    strings.TrimSpace(name),
-		APIKey:  strings.TrimSpace(apiKey),
-		BaseURL: strings.TrimSpace(baseURL),
-		Model:   strings.TrimSpace(model),
-	}, nil
-}
-
-func parseTelegramAllowlist(raw string) (map[int64]struct{}, error) {
-	items := splitCSV(raw)
-	if len(items) == 0 {
-		return nil, errors.New("allowlist is empty")
-	}
-
-	result := make(map[int64]struct{}, len(items))
-	for _, item := range items {
-		id, err := strconv.ParseInt(item, 10, 64)
+	if file.Telegram.Enabled {
+		id, err := envInt("TELEGRAM_API_ID")
 		if err != nil {
-			return nil, fmt.Errorf("invalid telegram user id %q", item)
+			return Config{}, err
+		}
+		hash, err := requireEnv("TELEGRAM_API_HASH")
+		if err != nil {
+			return Config{}, err
+		}
+		token, err := requireEnv("TELEGRAM_BOT_TOKEN")
+		if err != nil {
+			return Config{}, err
+		}
+		owner, err := envInt64("OWNER_TELEGRAM_ID")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Telegram = TelegramConfig{Enabled: true, BotToken: token, APIID: id, APIHash: hash, OwnerID: owner, AllowedUserIDs: telegramIDs(file.Telegram.AllowedUserIDs, owner)}
+	}
+	if file.Discord.Enabled {
+		token, err := requireEnv("DISCORD_BOT_TOKEN")
+		if err != nil {
+			return Config{}, err
+		}
+		appID, err := requireEnv("DISCORD_CLIENT_ID")
+		if err != nil {
+			return Config{}, err
+		}
+		owner, err := requireEnv("OWNER_DISCORD_ID")
+		if err != nil {
+			return Config{}, err
+		}
+		cfg.Discord = DiscordConfig{Enabled: true, BotToken: token, ApplicationID: appID, OwnerID: owner, AllowedUserIDs: discordIDs(file.Discord.AllowedUserIDs, owner), ProcessingLimit: maxDuration(timeout*2+5*time.Second, 20*time.Second)}
+	}
+	if !cfg.Telegram.Enabled && !cfg.Discord.Enabled {
+		return Config{}, errors.New("enable telegram or discord in config.yaml")
+	}
+	return cfg, nil
+}
+
+func defaultFileConfig() fileConfig {
+	var c fileConfig
+	c.Telegram.Enabled = true
+	c.AI.RequestTimeout = "30s"
+	c.RateLimit.Window = "1m"
+	return c
+}
+func parseDuration(raw string, fallback time.Duration) (time.Duration, error) {
+	if strings.TrimSpace(raw) == "" {
+		return fallback, nil
+	}
+	d, e := time.ParseDuration(raw)
+	if e != nil || d <= 0 {
+		return 0, errors.New("must be positive duration")
+	}
+	return d, nil
+}
+func defaultString(v, f string) string {
+	if strings.TrimSpace(v) == "" {
+		return f
+	}
+	return strings.TrimSpace(v)
+}
+func defaultInt(v, f int) int {
+	if v == 0 {
+		return f
+	}
+	return v
+}
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
+}
+func requireEnv(key string) (string, error) {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return "", fmt.Errorf("required env %s is not set", key)
+	}
+	return v, nil
+}
+func envInt(key string) (int, error) {
+	v, e := requireEnv(key)
+	if e != nil {
+		return 0, e
+	}
+	n, e := strconv.Atoi(v)
+	if e != nil || n <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return n, nil
+}
+func envInt64(key string) (int64, error) {
+	v, e := requireEnv(key)
+	if e != nil {
+		return 0, e
+	}
+	n, e := strconv.ParseInt(v, 10, 64)
+	if e != nil || n <= 0 {
+		return 0, fmt.Errorf("%s must be a positive integer", key)
+	}
+	return n, nil
+}
+func telegramIDs(ids []int64, owner int64) map[int64]struct{} {
+	result := map[int64]struct{}{owner: {}}
+	for _, id := range ids {
+		if id > 0 {
+			result[id] = struct{}{}
+		}
+	}
+	return result
+}
+func discordIDs(ids []string, owner string) map[string]struct{} {
+	result := map[string]struct{}{owner: {}}
+	for _, id := range ids {
+		if strings.TrimSpace(id) != "" {
+			result[id] = struct{}{}
+		}
+	}
+	return result
+}
+func telegramIDsSlice(ids map[int64]struct{}, owner int64) []int64 {
+	result := make([]int64, 0, len(ids))
+	for id := range ids {
+		if id != owner {
+			result = append(result, id)
+		}
+	}
+	return result
+}
+func discordIDsSlice(ids map[string]struct{}, owner string) []string {
+	result := make([]string, 0, len(ids))
+	for id := range ids {
+		if id != owner {
+			result = append(result, id)
+		}
+	}
+	return result
+}
+func parseTelegramAllowlist(raw string) (map[int64]struct{}, error) {
+	result := map[int64]struct{}{}
+	for _, item := range strings.Split(raw, ",") {
+		if strings.TrimSpace(item) == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(strings.TrimSpace(item), 10, 64)
+		if err != nil {
+			return nil, err
 		}
 		result[id] = struct{}{}
 	}
-	return result, nil
-}
-
-func parseDiscordAllowlist(raw string) (map[string]struct{}, error) {
-	items := splitCSV(raw)
-	if len(items) == 0 {
+	if len(result) == 0 {
 		return nil, errors.New("allowlist is empty")
 	}
-
-	re := regexp.MustCompile(`^\d+$`)
-	result := make(map[string]struct{}, len(items))
-	for _, item := range items {
-		if !re.MatchString(item) {
-			return nil, fmt.Errorf("invalid discord user id %q", item)
-		}
-		result[item] = struct{}{}
-	}
 	return result, nil
 }
-
-func resolveTelegramEnabled() (bool, error) {
-	explicit, hasValue, err := envBoolOptional("TELEGRAM_ENABLED")
-	if err != nil {
-		return false, err
-	}
-	if hasValue {
-		return explicit, nil
-	}
-	return strings.TrimSpace(firstNonEmpty("TELEGRAM_BOT_TOKEN", "BOT_TOKEN")) != "", nil
-}
-
-func resolveDiscordEnabled() (bool, error) {
-	explicit, hasValue, err := envBoolOptional("DISCORD_ENABLED")
-	if err != nil {
-		return false, err
-	}
-	if hasValue {
-		return explicit, nil
-	}
-	return strings.TrimSpace(os.Getenv("DISCORD_APPLICATION_ID")) != "", nil
-}
-
-func envBoolOptional(key string) (value bool, hasValue bool, err error) {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return false, false, nil
-	}
-	parsed, parseErr := strconv.ParseBool(raw)
-	if parseErr != nil {
-		return false, true, fmt.Errorf("%s must be boolean", key)
-	}
-	return parsed, true, nil
-}
-
-func requireEnv(key string) (string, error) {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return "", fmt.Errorf("required env %s is not set", key)
-	}
-	return value, nil
-}
-
-func envOrDefault(key, fallback string) string {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-func envInt(key string, fallback int) (int, error) {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.Atoi(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be integer: %w", key, err)
-	}
-	return parsed, nil
-}
-
-func envFloat(key string, fallback float64) (float64, error) {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback, nil
-	}
-	parsed, err := strconv.ParseFloat(value, 64)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be float: %w", key, err)
-	}
-	return parsed, nil
-}
-
-func envDuration(key string, fallback time.Duration) (time.Duration, error) {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		return fallback, nil
-	}
-
-	if seconds, err := strconv.Atoi(value); err == nil {
-		if seconds <= 0 {
-			return 0, fmt.Errorf("%s must be > 0", key)
-		}
-		return time.Duration(seconds) * time.Second, nil
-	}
-
-	duration, err := time.ParseDuration(value)
-	if err != nil {
-		return 0, fmt.Errorf("%s must be duration (e.g. 30s) or integer seconds", key)
-	}
-	if duration <= 0 {
-		return 0, fmt.Errorf("%s must be > 0", key)
-	}
-	return duration, nil
-}
-
-func firstNonEmpty(keys ...string) string {
-	for _, key := range keys {
-		value := strings.TrimSpace(os.Getenv(key))
-		if value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func splitCSV(raw string) []string {
-	parts := strings.Split(raw, ",")
-	result := make([]string, 0, len(parts))
-	for _, part := range parts {
-		item := strings.TrimSpace(part)
-		if item == "" {
+func parseDiscordAllowlist(raw string) (map[string]struct{}, error) {
+	result := map[string]struct{}{}
+	for _, item := range strings.Split(raw, ",") {
+		id := strings.TrimSpace(item)
+		if id == "" {
 			continue
 		}
-		result = append(result, item)
+		if _, err := strconv.ParseInt(id, 10, 64); err != nil {
+			return nil, err
+		}
+		result[id] = struct{}{}
 	}
-	return result
+	if len(result) == 0 {
+		return nil, errors.New("allowlist is empty")
+	}
+	return result, nil
 }

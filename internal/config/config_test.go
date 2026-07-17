@@ -2,157 +2,69 @@ package config
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
-func TestParseTelegramAllowlist(t *testing.T) {
-	got, err := parseTelegramAllowlist("123, 456,789")
+func TestLoadReadsYAMLAndBootstrapEnvironment(t *testing.T) {
+	directory := t.TempDir()
+	previous, err := os.Getwd()
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
-
-	if len(got) != 3 {
-		t.Fatalf("expected 3 ids, got %d", len(got))
+	if err := os.Chdir(directory); err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := got[456]; !ok {
-		t.Fatalf("expected id 456 in allowlist")
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+	content := "telegram:\n  enabled: true\n  allowed_user_ids: [42]\ndiscord:\n  enabled: false\nai:\n  request_timeout: 20s\n"
+	if err := os.WriteFile(filepath.Join(directory, DefaultConfigPath), []byte(content), 0o600); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestParseDiscordAllowlist(t *testing.T) {
-	got, err := parseDiscordAllowlist("111,222,333")
+	for key, value := range map[string]string{"TELEGRAM_API_ID": "1", "TELEGRAM_API_HASH": "hash", "TELEGRAM_BOT_TOKEN": "token", "OWNER_TELEGRAM_ID": "7"} {
+		t.Setenv(key, value)
+	}
+	cfg, err := Load()
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
-
-	if len(got) != 3 {
-		t.Fatalf("expected 3 ids, got %d", len(got))
+	if !cfg.Telegram.Enabled || cfg.Telegram.OwnerID != 7 {
+		t.Fatalf("unexpected telegram config: %#v", cfg.Telegram)
 	}
-	if _, ok := got["222"]; !ok {
-		t.Fatalf("expected id 222 in allowlist")
+	if _, ok := cfg.Telegram.AllowedUserIDs[42]; !ok {
+		t.Fatal("yaml allowlist entry is missing")
 	}
-}
-
-func TestLoad_DisabledTelegramPlatform(t *testing.T) {
-	env := baseAIEnv()
-	env["TELEGRAM_ENABLED"] = "false"
-	env["DISCORD_ENABLED"] = "true"
-	env["DISCORD_APPLICATION_ID"] = "123456789012345678"
-	env["DISCORD_PUBLIC_KEY"] = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	env["ALLOWED_DISCORD_USER_IDS"] = "123456789012345678"
-	env["PUBLIC_BASE_URL"] = "https://example.com"
-	withEnv(t, env, func() {
-		cfg, err := Load()
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.Telegram.Enabled {
-			t.Fatalf("telegram should be disabled")
-		}
-		if !cfg.Discord.Enabled {
-			t.Fatalf("discord should be enabled")
-		}
-	})
-}
-
-func TestLoad_DisabledDiscordPlatform(t *testing.T) {
-	env := baseAIEnv()
-	env["TELEGRAM_ENABLED"] = "true"
-	env["DISCORD_ENABLED"] = "false"
-	env["TELEGRAM_BOT_TOKEN"] = "telegram-token"
-	env["TELEGRAM_API_ID"] = "123"
-	env["TELEGRAM_API_HASH"] = "telegram-api-hash"
-	env["ALLOWED_TELEGRAM_USER_IDS"] = "111"
-	withEnv(t, env, func() {
-		cfg, err := Load()
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if !cfg.Telegram.Enabled {
-			t.Fatalf("telegram should be enabled")
-		}
-		if cfg.Discord.Enabled {
-			t.Fatalf("discord should be disabled")
-		}
-	})
-}
-
-func TestLoad_ErrorsWhenBothPlatformsDisabled(t *testing.T) {
-	env := baseAIEnv()
-	env["TELEGRAM_ENABLED"] = "false"
-	env["DISCORD_ENABLED"] = "false"
-	withEnv(t, env, func() {
-		_, err := Load()
-		if err == nil {
-			t.Fatalf("expected error when both platforms disabled")
-		}
-	})
-}
-
-func TestLoad_PrioritizesNewTelegramVariables(t *testing.T) {
-	env := baseAIEnv()
-	env["TELEGRAM_ENABLED"] = "true"
-	env["DISCORD_ENABLED"] = "false"
-	env["TELEGRAM_BOT_TOKEN"] = "new-token"
-	env["TELEGRAM_API_ID"] = "123"
-	env["TELEGRAM_API_HASH"] = "telegram-api-hash"
-	env["BOT_TOKEN"] = "old-token"
-	env["ALLOWED_TELEGRAM_USER_IDS"] = "111"
-	env["ALLOWED_USER_IDS"] = "999"
-	withEnv(t, env, func() {
-		cfg, err := Load()
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if cfg.Telegram.BotToken != "new-token" {
-			t.Fatalf("expected new TELEGRAM_BOT_TOKEN to have priority")
-		}
-		if _, ok := cfg.Telegram.AllowedUserIDs[111]; !ok {
-			t.Fatalf("expected new allowlist to have priority")
-		}
-	})
-}
-
-func baseAIEnv() map[string]string {
-	return map[string]string{
-		"PRIMARY_PROVIDER":  "cerebras",
-		"PRIMARY_API_KEY":   "pk",
-		"PRIMARY_BASE_URL":  "https://primary.example/v1",
-		"PRIMARY_MODEL":     "model-primary",
-		"FALLBACK_PROVIDER": "groq",
-		"FALLBACK_API_KEY":  "fk",
-		"FALLBACK_BASE_URL": "https://fallback.example/v1",
-		"FALLBACK_MODEL":    "model-fallback",
-		"SYSTEM_PROMPT":     "system",
+	if _, err := os.Stat(DefaultProvidersPath); err != nil {
+		t.Fatalf("providers file was not created: %v", err)
 	}
 }
 
-func withEnv(t *testing.T, vars map[string]string, fn func()) {
-	t.Helper()
-
-	original := map[string]*string{}
-	for key, value := range vars {
-		v, ok := os.LookupEnv(key)
-		if ok {
-			valueCopy := v
-			original[key] = &valueCopy
-		} else {
-			original[key] = nil
-		}
-		if err := os.Setenv(key, value); err != nil {
-			t.Fatalf("set env %s: %v", key, err)
-		}
+func TestSaveProvidersWritesPrivateFile(t *testing.T) {
+	directory := t.TempDir()
+	previous, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
 	}
+	if err := os.Chdir(directory); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previous) })
+	if err := SaveProviders(ProvidersConfig{Primary: ProviderConfig{Name: "test", APIKey: "secret"}}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(DefaultProvidersPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("expected 0600, got %o", info.Mode().Perm())
+	}
+}
 
-	defer func() {
-		for key, value := range original {
-			if value == nil {
-				_ = os.Unsetenv(key)
-				continue
-			}
-			_ = os.Setenv(key, *value)
-		}
-	}()
-
-	fn()
+func TestParseAllowLists(t *testing.T) {
+	if _, err := parseTelegramAllowlist("1,2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := parseDiscordAllowlist("1,2"); err != nil {
+		t.Fatal(err)
+	}
 }

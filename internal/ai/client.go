@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/hhhhhffd/go-gpt-tg-bot/internal/config"
 )
@@ -98,6 +99,7 @@ type Service struct {
 
 	primaryProvider  config.ProviderConfig
 	fallbackProvider config.ProviderConfig
+	providersMu      sync.RWMutex
 }
 
 func NewService(cfg config.Config, logger *slog.Logger) *Service {
@@ -121,7 +123,10 @@ func (s *Service) Complete(ctx context.Context, request CompletionRequest) (stri
 		}
 	}
 
-	answer, err := s.askProvider(ctx, s.primaryProvider, request)
+	s.providersMu.RLock()
+	primary, fallback := s.primaryProvider, s.fallbackProvider
+	s.providersMu.RUnlock()
+	answer, err := s.askProvider(ctx, primary, request)
 	if err == nil {
 		return answer, nil
 	}
@@ -131,16 +136,24 @@ func (s *Service) Complete(ctx context.Context, request CompletionRequest) (stri
 	}
 
 	s.logger.Warn("primary provider failed, switching to fallback",
-		"provider", s.primaryProvider.Name,
+		"provider", primary.Name,
 		"error_kind", providerErrorKind(err),
 	)
 
-	answer, fallbackErr := s.askProvider(ctx, s.fallbackProvider, request)
+	answer, fallbackErr := s.askProvider(ctx, fallback, request)
 	if fallbackErr != nil {
 		return "", fmt.Errorf("primary failed: %w; fallback failed: %v", err, fallbackErr)
 	}
 
 	return answer, nil
+}
+
+// UpdateProviders applies owner-saved settings to subsequent requests.
+func (s *Service) UpdateProviders(providers config.ProvidersConfig) {
+	s.providersMu.Lock()
+	defer s.providersMu.Unlock()
+	s.primaryProvider = providers.Primary
+	s.fallbackProvider = providers.Fallback
 }
 
 func validateRequest(request CompletionRequest) error {

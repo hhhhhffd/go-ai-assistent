@@ -1,12 +1,12 @@
 # go-ai-assistant
 
-Один Go-процесс для Telegram и Discord. Платформы используют общий `internal/assistant`-сервис, единый system prompt и OpenAI-compatible primary/fallback-провайдеры. История и база данных не используются.
+Один Go-процесс для Telegram и Discord. Платформы используют общий `internal/assistant`-сервис и OpenAI-compatible primary/fallback-провайдеры. История и база данных не используются.
 
 ## Возможности
 
-- Telegram: упоминание бота и reply на его сообщение, только для `ALLOWED_TELEGRAM_USER_IDS`.
-- Discord User-Installed App: `/ask`, `/deep`, контекстная команда сообщения `Объяснить`; по умолчанию ответы ephemeral.
-- Discord использует только HTTP Interactions Endpoint, без Gateway и без добавления обычного guild-бота.
+- Telegram Guest Mode: упоминание бота и reply на его сообщение. Owner настраивает бот в обычном личном чате командой `/settings`.
+- Discord Gateway: `/ask`, `/deep`, `/settings` и контекстная команда сообщения `Объяснить`; ответы по умолчанию ephemeral.
+- Настройки и провайдеры меняются owner'ом без перезапуска.
 
 ## Telegram: важное ограничение Guest Mode
 
@@ -17,13 +17,13 @@ Guest Mode недоступен для secret chats и чатов с content pro
 ## Discord Developer Portal
 
 1. Создайте Application в [Discord Developer Portal](https://discord.com/developers/applications) и откройте **Installation**.
-2. В **Installation Contexts** включите **User Install**; Guild Install не нужен.
-3. Для User Install выберите scope `applications.commands`. Scope `bot` не нужен.
-4. В **Interactions Endpoint URL** укажите `https://your-domain.example/discord/interactions` и сохраните настройку. URL должен быть публичным HTTPS.
-5. В **General Information** скопируйте Application ID и Public Key. Bot Token понадобится только для регистрации команд.
-6. Добавьте свой Discord user ID в `ALLOWED_DISCORD_USER_IDS`.
+2. В **Installation Contexts** включите **Guild Install**.
+3. В install link выберите scopes `bot` и `applications.commands`.
+4. Не задавайте **Interactions Endpoint URL**: бот подключается к Gateway сам, публичный адрес не нужен.
+5. В **General Information** скопируйте Application ID; Bot Token нужен для Gateway и регистрации команд.
+6. Добавьте свой Discord user ID в `OWNER_DISCORD_ID`.
 7. Зарегистрируйте команды командой ниже. Повторный запуск заменяет весь набор глобальных команд и не создаёт дубликаты.
-8. В разделе Installation скопируйте сгенерированную ссылку **Add to My Apps**. После установки команды доступны в guild, bot DM и group DM, если Discord разрешает данный context.
+8. В разделе Installation используйте сгенерированную ссылку, чтобы добавить bot в нужный сервер.
 
 ```bash
 make register-discord
@@ -32,27 +32,28 @@ make register-discord
 
 ## Конфигурация и запуск
 
-Скопируйте `.env.example` в `.env` и заполните ключи. Telegram переменные не требуются при `TELEGRAM_ENABLED=false`; Discord-переменные не требуются при `DISCORD_ENABLED=false`. Если отключены обе платформы, запуск завершится с ошибкой.
+Скопируйте `.env.example` в `.env` и заполните только bootstrap-данные: owner IDs, токены и Telegram API ID/hash. При первом запуске бот создаст `config.yaml` и `providers.yaml`; оба файла локальные и не коммитятся. Через `/settings` owner может настроить primary/fallback провайдеры. API keys хранятся только в `providers.yaml` с правами `0600`.
+
+В Telegram откройте личный чат с ботом и отправьте `/settings`. В Discord используйте `/settings`; для изменения передайте поле `command`, например `set primary model gpt-4.1`. Команды одинаковы на обеих платформах:
+
+```text
+/settings providers
+/settings set primary name openai
+/settings set primary api_key <key>
+/settings set primary base_url https://api.openai.com/v1
+/settings set primary model gpt-4.1
+/settings config
+/settings set config ai temperature 0.3
+/settings allow telegram 123456789
+```
+
+Изменения провайдеров и AI-параметров применяются сразу. Лимиты, allowlist и включение платформ сохраняются в `config.yaml` и применяются при следующем перезапуске процесса.
 
 ```bash
-# Только Telegram: без открытого HTTP-порта
 docker compose up --build
-
-# Discord или обе платформы: публикует HTTP_ADDR и включает healthcheck
-docker compose -f docker-compose.yml -f docker-compose.discord.yml up --build
 ```
 
-`HTTP_ADDR` по умолчанию `:8080`; Discord endpoint — `${PUBLIC_BASE_URL}/discord/interactions`. При Discord обязательно задайте `PUBLIC_BASE_URL` с `https://` URL.
-
-### Caddy (пример reverse proxy)
-
-```caddyfile
-your-domain.example {
-    reverse_proxy 127.0.0.1:8080
-}
-```
-
-Caddy автоматически выдаст TLS-сертификат при корректных DNS-записях. Он нужен только для публичного Discord endpoint, не для Telegram-only режима.
+Discord Gateway и Telegram работают через исходящие соединения: открытый HTTP-порт, Caddy и публичный HTTPS URL не нужны.
 
 ## Проверки
 

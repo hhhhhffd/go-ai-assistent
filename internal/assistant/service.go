@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/hhhhhffd/go-gpt-tg-bot/internal/ai"
 )
@@ -24,6 +25,7 @@ type Config struct {
 type DefaultService struct {
 	aiClient AIClient
 	cfg      Config
+	mu       sync.RWMutex
 }
 
 func NewService(cfg Config, aiClient AIClient) (*DefaultService, error) {
@@ -55,17 +57,20 @@ func (s *DefaultService) Answer(ctx context.Context, request Request) (string, e
 		return "", errors.New("question is empty")
 	}
 
-	systemPrompt := s.cfg.SystemPrompt
-	maxTokens := s.cfg.MaxOutputTokens
+	s.mu.RLock()
+	cfg := s.cfg
+	s.mu.RUnlock()
+	systemPrompt := cfg.SystemPrompt
+	maxTokens := cfg.MaxOutputTokens
 
 	if request.Deep {
-		maxTokens = s.cfg.DeepMaxOutputTokens
-		if strings.TrimSpace(s.cfg.DeepSystemPrompt) != "" {
-			systemPrompt = s.cfg.DeepSystemPrompt
+		maxTokens = cfg.DeepMaxOutputTokens
+		if strings.TrimSpace(cfg.DeepSystemPrompt) != "" {
+			systemPrompt = cfg.DeepSystemPrompt
 		} else {
 			systemPrompt = fmt.Sprintf(
 				"%s\n\nДополнительно: внимательно проанализируй вопрос, покажи ход рассуждения структурно, приведи ограничения и практические рекомендации.",
-				s.cfg.SystemPrompt,
+				cfg.SystemPrompt,
 			)
 		}
 	}
@@ -86,6 +91,16 @@ func (s *DefaultService) Answer(ctx context.Context, request Request) (string, e
 		SystemPrompt:    systemPrompt,
 		Messages:        messages,
 		MaxOutputTokens: maxTokens,
-		Temperature:     s.cfg.Temperature,
+		Temperature:     cfg.Temperature,
 	})
+}
+
+func (s *DefaultService) UpdateConfig(cfg Config) error {
+	if strings.TrimSpace(cfg.SystemPrompt) == "" || cfg.MaxOutputTokens <= 0 || cfg.DeepMaxOutputTokens <= 0 {
+		return errors.New("invalid assistant configuration")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cfg = cfg
+	return nil
 }

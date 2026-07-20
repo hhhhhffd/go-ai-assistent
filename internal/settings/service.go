@@ -12,7 +12,7 @@ import (
 	"github.com/hhhhhffd/go-gpt-tg-bot/internal/config"
 )
 
-// Service owns mutable provider settings. Secrets are never returned to chat.
+// Service owns mutable provider settings. Secrets are exposed only through the owner-only private Telegram panel.
 type Service struct {
 	mu        sync.Mutex
 	providers config.ProvidersConfig
@@ -246,6 +246,13 @@ func (s *Service) providersView() string {
 }
 func (s *Service) providersViewLocked() string {
 	return fmt.Sprintf("Провайдеры:\nprimary: name=%q, base_url=%q, model=%q, api_key=%s\nfallback: name=%q, base_url=%q, model=%q, api_key=%s", s.providers.Primary.Name, s.providers.Primary.BaseURL, s.providers.Primary.Model, secretState(s.providers.Primary.APIKey), s.providers.Fallback.Name, s.providers.Fallback.BaseURL, s.providers.Fallback.Model, secretState(s.providers.Fallback.APIKey))
+}
+
+// PrivateProvidersView returns secrets for the owner-only Telegram settings chat.
+func (s *Service) PrivateProvidersView() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return fmt.Sprintf("Провайдеры:\nprimary: name=%q, base_url=%q, model=%q, api_key=%q\nfallback: name=%q, base_url=%q, model=%q, api_key=%q", s.providers.Primary.Name, s.providers.Primary.BaseURL, s.providers.Primary.Model, s.providers.Primary.APIKey, s.providers.Fallback.Name, s.providers.Fallback.BaseURL, s.providers.Fallback.Model, s.providers.Fallback.APIKey)
 }
 
 func (s *Service) configView() string {

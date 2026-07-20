@@ -98,7 +98,10 @@ func (s *Service) handleGuestQuery(ctx context.Context, update *tg.UpdateBotGues
 
 	question := strings.TrimSpace(utils.StripMention(message.Message, s.username))
 	if question == "" {
-		return s.reply(ctx, update.QueryID, "Добавьте вопрос после упоминания бота.")
+		return s.reply(ctx, update.QueryID, fmt.Sprintf("Привет! Напишите вопрос после упоминания, например: @%s объясни, как работает Git.", s.username))
+	}
+	if question == "/settings" {
+		return s.reply(ctx, update.QueryID, "Панель настроек доступна только owner в личном чате с ботом. Откройте диалог с ботом и отправьте /settings.")
 	}
 
 	request := assistant.Request{Question: question}

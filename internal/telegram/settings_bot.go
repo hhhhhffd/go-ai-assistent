@@ -19,10 +19,6 @@ import (
 const telegramAPIBaseURL = "https://api.telegram.org"
 
 type SettingsExecutor interface{ Execute(input string) string }
-type PrivateSettingsViewer interface {
-	SettingsExecutor
-	PrivateProvidersView() string
-}
 
 type SettingsBot struct {
 	token    string
@@ -147,7 +143,11 @@ func (b *SettingsBot) handleMessage(ctx context.Context, message *botMessage) {
 		if err := b.sendTyping(ctx, message.Chat.ID); err != nil {
 			b.logger.Warn("send settings typing action", "error", err)
 		}
-		if err := b.sendPanel(ctx, message.Chat.ID, panelResult(b.settings.Execute(text))); err != nil {
+		result := b.settings.Execute(text)
+		if isAPIKeyCommand(text) {
+			b.deleteInputMessage(ctx, message)
+		}
+		if err := b.sendPanel(ctx, message.Chat.ID, panelResult(result)); err != nil {
 			b.logger.Error("send settings command result", "error", err)
 		}
 		return
@@ -173,6 +173,9 @@ func (b *SettingsBot) handleMessage(ctx context.Context, message *botMessage) {
 		b.logger.Warn("send settings typing action", "error", err)
 	}
 	result := b.settings.Execute(prefix + " " + text)
+	if isAPIKeyCommand(prefix) {
+		b.deleteInputMessage(ctx, message)
+	}
 	if err := b.sendPanel(ctx, message.Chat.ID, panelResult(result)); err != nil {
 		b.logger.Error("send settings edit result", "error", err)
 	}
@@ -237,11 +240,21 @@ func (b *SettingsBot) handleCallback(ctx context.Context, callback *botCallbackQ
 }
 
 func (b *SettingsBot) privateProvidersView() string {
-	viewer, ok := b.settings.(PrivateSettingsViewer)
-	if !ok {
-		return b.settings.Execute("/settings providers")
+	return b.settings.Execute("/settings providers")
+}
+
+func isAPIKeyCommand(input string) bool {
+	fields := strings.Fields(input)
+	return len(fields) >= 4 && fields[0] == "/settings" && fields[1] == "set" && fields[3] == "api_key"
+}
+
+func (b *SettingsBot) deleteInputMessage(ctx context.Context, message *botMessage) {
+	if err := b.call(ctx, "deleteMessage", map[string]any{
+		"chat_id":    strconv.FormatInt(message.Chat.ID, 10),
+		"message_id": message.MessageID,
+	}, nil); err != nil {
+		b.logger.Warn("delete API key message", "error", err)
 	}
-	return viewer.PrivateProvidersView()
 }
 
 func editAction(action string) (prefix, prompt string, ok bool) {

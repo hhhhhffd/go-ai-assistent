@@ -7,6 +7,7 @@ import (
 )
 
 func TestLoadReadsYAMLAndBootstrapEnvironment(t *testing.T) {
+	t.Setenv(ConfigDirEnv, "")
 	directory := t.TempDir()
 	previous, err := os.Getwd()
 	if err != nil {
@@ -39,6 +40,7 @@ func TestLoadReadsYAMLAndBootstrapEnvironment(t *testing.T) {
 }
 
 func TestSaveProvidersWritesPrivateFile(t *testing.T) {
+	t.Setenv(ConfigDirEnv, "")
 	directory := t.TempDir()
 	previous, err := os.Getwd()
 	if err != nil {
@@ -57,6 +59,24 @@ func TestSaveProvidersWritesPrivateFile(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("expected 0600, got %o", info.Mode().Perm())
+	}
+}
+
+func TestConfigDirStoresAllStateFiles(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv(ConfigDirEnv, directory)
+
+	if err := EnsureFiles(); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{filepath.Join(directory, DefaultConfigPath), filepath.Join(directory, DefaultProvidersPath)} {
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("state file %s: %v", path, err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("state file %s mode = %o, want 600", path, info.Mode().Perm())
+		}
 	}
 }
 

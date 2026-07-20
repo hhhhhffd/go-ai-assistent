@@ -102,3 +102,29 @@ func TestEditAction(t *testing.T) {
 		t.Fatal("unknown action must not create an edit")
 	}
 }
+
+func TestSettingsBotDeletesAPIKeyInput(t *testing.T) {
+	var methods []string
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		methods = append(methods, request.URL.Path)
+		writer.Header().Set("Content-Type", "application/json")
+		if _, err := writer.Write([]byte(`{"ok":true,"result":true}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	bot := NewSettingsBot(config.TelegramConfig{BotToken: "token", OwnerID: 42}, &fakeSettingsExecutor{}, logger.New("error"))
+	bot.baseURL = server.URL
+	bot.setPending(42, "/settings set primary api_key")
+	message := &botMessage{MessageID: 700, Text: "secret"}
+	message.Chat.ID = 42
+	message.Chat.Type = "private"
+	message.From.ID = 42
+
+	bot.handleMessage(context.Background(), message)
+
+	if !strings.Contains(strings.Join(methods, " "), "deleteMessage") {
+		t.Fatalf("expected deleteMessage call, got %v", methods)
+	}
+}

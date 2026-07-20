@@ -9,6 +9,7 @@ import (
 
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/tg"
+	"github.com/hhhhhffd/go-gpt-tg-bot/internal/ai"
 	"github.com/hhhhhffd/go-gpt-tg-bot/internal/assistant"
 	"github.com/hhhhhffd/go-gpt-tg-bot/internal/config"
 	"github.com/hhhhhffd/go-gpt-tg-bot/internal/metrics"
@@ -115,7 +116,7 @@ func (s *Service) handleGuestQuery(ctx context.Context, update *tg.UpdateBotGues
 	if err != nil {
 		metrics.AIFailures.Add(1)
 		s.logger.Error("telegram assistant request failed", "error", err, "user_id", userID)
-		answer = "Временная ошибка AI-провайдера. Попробуйте чуть позже."
+		answer = ai.UserErrorMessage(err)
 	}
 	return s.reply(ctx, update.QueryID, answer)
 }

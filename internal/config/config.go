@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 const (
 	DefaultConfigPath    = "config.yaml"
 	DefaultProvidersPath = "providers.yaml"
+	ConfigDirEnv         = "CONFIG_DIR"
 )
 
 type ProviderConfig struct {
@@ -102,11 +104,11 @@ func Load() (Config, error) {
 	if err := EnsureFiles(); err != nil {
 		return Config{}, err
 	}
-	file, err := readConfigFile(DefaultConfigPath)
+	file, err := readConfigFile(configPath())
 	if err != nil {
 		return Config{}, err
 	}
-	providers, err := readProvidersFile(DefaultProvidersPath)
+	providers, err := readProvidersFile(providersPath())
 	if err != nil {
 		return Config{}, err
 	}
@@ -115,27 +117,29 @@ func Load() (Config, error) {
 
 // EnsureFiles creates local editable configuration files on first startup.
 func EnsureFiles() error {
-	if _, err := os.Stat(DefaultConfigPath); errors.Is(err, os.ErrNotExist) {
+	configFilePath := configPath()
+	if _, err := os.Stat(configFilePath); errors.Is(err, os.ErrNotExist) {
 		data, marshalErr := yaml.Marshal(defaultFileConfig())
 		if marshalErr != nil {
 			return marshalErr
 		}
-		if writeErr := writePrivateFile(DefaultConfigPath, data); writeErr != nil {
-			return fmt.Errorf("create %s: %w", DefaultConfigPath, writeErr)
+		if writeErr := writePrivateFile(configFilePath, data); writeErr != nil {
+			return fmt.Errorf("create %s: %w", configFilePath, writeErr)
 		}
 	} else if err != nil {
-		return fmt.Errorf("stat %s: %w", DefaultConfigPath, err)
+		return fmt.Errorf("stat %s: %w", configFilePath, err)
 	}
-	if _, err := os.Stat(DefaultProvidersPath); errors.Is(err, os.ErrNotExist) {
+	providersFilePath := providersPath()
+	if _, err := os.Stat(providersFilePath); errors.Is(err, os.ErrNotExist) {
 		data, marshalErr := yaml.Marshal(ProvidersConfig{})
 		if marshalErr != nil {
 			return marshalErr
 		}
-		if writeErr := writePrivateFile(DefaultProvidersPath, data); writeErr != nil {
-			return fmt.Errorf("create %s: %w", DefaultProvidersPath, writeErr)
+		if writeErr := writePrivateFile(providersFilePath, data); writeErr != nil {
+			return fmt.Errorf("create %s: %w", providersFilePath, writeErr)
 		}
 	} else if err != nil {
-		return fmt.Errorf("stat %s: %w", DefaultProvidersPath, err)
+		return fmt.Errorf("stat %s: %w", providersFilePath, err)
 	}
 	return nil
 }
@@ -147,7 +151,7 @@ func SaveProviders(providers ProvidersConfig) error {
 	if err != nil {
 		return fmt.Errorf("marshal providers: %w", err)
 	}
-	return writePrivateFile(DefaultProvidersPath, data)
+	return writePrivateFile(providersPath(), data)
 }
 
 // SaveConfig persists editable, non-bootstrap settings. Tokens and owner IDs
@@ -165,11 +169,15 @@ func SaveConfig(cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
-	return writePrivateFile(DefaultConfigPath, data)
+	return writePrivateFile(configPath(), data)
 }
 
 func writePrivateFile(path string, data []byte) error {
-	temporary, err := os.CreateTemp(".", ".config-*")
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return fmt.Errorf("create config directory %s: %w", directory, err)
+	}
+	temporary, err := os.CreateTemp(directory, ".config-*")
 	if err != nil {
 		return err
 	}
@@ -187,6 +195,18 @@ func writePrivateFile(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(temporaryPath, path)
+}
+
+func configPath() string { return filepath.Join(configDir(), DefaultConfigPath) }
+
+func providersPath() string { return filepath.Join(configDir(), DefaultProvidersPath) }
+
+func configDir() string {
+	directory := strings.TrimSpace(os.Getenv(ConfigDirEnv))
+	if directory == "" {
+		return "."
+	}
+	return directory
 }
 
 func LoadDiscordRegistrationConfig() (DiscordRegistrationConfig, error) {

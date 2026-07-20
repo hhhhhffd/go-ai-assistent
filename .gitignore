@@ -4,6 +4,7 @@
 !.env.example
 config.yaml
 providers.yaml
+data/
 
 # Скомпилированные Go-бинарники и сборки.
 bin/

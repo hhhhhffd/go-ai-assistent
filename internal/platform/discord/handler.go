@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/hhhhhffd/go-gpt-tg-bot/internal/ai"
 	"github.com/hhhhhffd/go-gpt-tg-bot/internal/assistant"
 	"github.com/hhhhhffd/go-gpt-tg-bot/internal/config"
 	"github.com/hhhhhffd/go-gpt-tg-bot/internal/metrics"
@@ -133,7 +134,7 @@ func (h *Handler) processDeferredResponse(
 		metrics.AIFailures.Add(1)
 		h.logger.Error("discord assistant request failed", "error", err)
 		_ = h.client.EditOriginalInteractionResponse(ctx, interaction.ApplicationID, interaction.Token, EditWebhookMessageRequest{
-			Content:         "Временная ошибка AI-провайдера. Попробуйте чуть позже.",
+			Content:         ai.UserErrorMessage(err),
 			AllowedMentions: safeAllowedMentions(),
 		})
 		return

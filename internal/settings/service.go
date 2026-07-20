@@ -165,6 +165,7 @@ func (s *Service) setAIConfig(field, value string) error {
 			return fmt.Errorf("request_timeout должно быть положительной duration, например 30s")
 		}
 		s.cfg.AI.RequestTimeout = parsed
+		s.ai.UpdateTimeout(parsed)
 	default:
 		return fmt.Errorf("Неизвестное AI-поле %q", field)
 	}

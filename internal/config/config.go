@@ -48,7 +48,6 @@ type TelegramConfig struct {
 type DiscordConfig struct {
 	Enabled         bool `yaml:"enabled"`
 	ApplicationID   string
-	PublicKey       string
 	BotToken        string
 	OwnerID         string
 	AllowedUserIDs  map[string]struct{}

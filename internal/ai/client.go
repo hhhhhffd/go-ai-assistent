@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hhhhhffd/go-gpt-tg-bot/internal/config"
 )
@@ -94,8 +95,9 @@ func ShouldFallback(err error) bool {
 }
 
 type Service struct {
-	httpClient *http.Client
-	logger     *slog.Logger
+	httpClientMu sync.RWMutex
+	httpClient   *http.Client
+	logger       *slog.Logger
 
 	primaryProvider  config.ProviderConfig
 	fallbackProvider config.ProviderConfig
@@ -154,6 +156,13 @@ func (s *Service) UpdateProviders(providers config.ProvidersConfig) {
 	defer s.providersMu.Unlock()
 	s.primaryProvider = providers.Primary
 	s.fallbackProvider = providers.Fallback
+}
+
+// UpdateTimeout applies the timeout to AI requests started after this call.
+func (s *Service) UpdateTimeout(timeout time.Duration) {
+	s.httpClientMu.Lock()
+	defer s.httpClientMu.Unlock()
+	s.httpClient = &http.Client{Timeout: timeout}
 }
 
 func validateRequest(request CompletionRequest) error {
@@ -222,7 +231,10 @@ func (s *Service) askProvider(ctx context.Context, provider config.ProviderConfi
 	httpRequest.Header.Set("Content-Type", "application/json")
 	httpRequest.Header.Set("Authorization", "Bearer "+provider.APIKey)
 
-	httpResponse, err := s.httpClient.Do(httpRequest)
+	s.httpClientMu.RLock()
+	httpClient := s.httpClient
+	s.httpClientMu.RUnlock()
+	httpResponse, err := httpClient.Do(httpRequest)
 	if err != nil {
 		return "", classifyTransportError(provider.Name, err)
 	}

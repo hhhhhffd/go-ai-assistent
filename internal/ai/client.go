@@ -105,13 +105,14 @@ type Service struct {
 }
 
 func NewService(cfg config.Config, logger *slog.Logger) *Service {
+	providers := normalizeProviders(config.ProvidersConfig{Primary: cfg.AI.PrimaryProvider, Fallback: cfg.AI.FallbackProvider})
 	return &Service{
 		httpClient: &http.Client{
 			Timeout: cfg.AI.RequestTimeout,
 		},
 		logger:           logger,
-		primaryProvider:  cfg.AI.PrimaryProvider,
-		fallbackProvider: cfg.AI.FallbackProvider,
+		primaryProvider:  providers.Primary,
+		fallbackProvider: providers.Fallback,
 	}
 }
 
@@ -152,10 +153,21 @@ func (s *Service) Complete(ctx context.Context, request CompletionRequest) (stri
 
 // UpdateProviders applies owner-saved settings to subsequent requests.
 func (s *Service) UpdateProviders(providers config.ProvidersConfig) {
+	providers = normalizeProviders(providers)
 	s.providersMu.Lock()
 	defer s.providersMu.Unlock()
 	s.primaryProvider = providers.Primary
 	s.fallbackProvider = providers.Fallback
+}
+
+func normalizeProviders(providers config.ProvidersConfig) config.ProvidersConfig {
+	if strings.TrimSpace(providers.Primary.Name) == "" {
+		providers.Primary.Name = "primary"
+	}
+	if strings.TrimSpace(providers.Fallback.Name) == "" {
+		providers.Fallback.Name = "fallback"
+	}
+	return providers
 }
 
 // UpdateTimeout applies the timeout to AI requests started after this call.
@@ -302,9 +314,6 @@ func buildOpenAIMessages(request CompletionRequest) []openAIChatMessage {
 }
 
 func validateProvider(provider config.ProviderConfig) error {
-	if strings.TrimSpace(provider.Name) == "" {
-		return errors.New("provider name is empty")
-	}
 	if strings.TrimSpace(provider.APIKey) == "" {
 		return errors.New("provider api key is empty")
 	}

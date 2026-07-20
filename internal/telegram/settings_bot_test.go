@@ -103,6 +103,20 @@ func TestEditAction(t *testing.T) {
 	}
 }
 
+func TestSettingsBotBackReturnsPreviousPanel(t *testing.T) {
+	bot := NewSettingsBot(config.TelegramConfig{OwnerID: 42}, &fakeSettingsExecutor{}, logger.New("error"))
+	bot.resetNavigation(42)
+	bot.navigate(42, "settings:ai")
+	bot.navigate(42, "settings:primary")
+
+	if got := bot.back(42); got != "settings:ai" {
+		t.Fatalf("first back = %q, want settings:ai", got)
+	}
+	if got := bot.back(42); got != "settings:main" {
+		t.Fatalf("second back = %q, want settings:main", got)
+	}
+}
+
 func TestSettingsBotDeletesAPIKeyInput(t *testing.T) {
 	var methods []string
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

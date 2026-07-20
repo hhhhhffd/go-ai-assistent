@@ -1,6 +1,10 @@
 package ai
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/hhhhhffd/go-gpt-tg-bot/internal/config"
+)
 
 func TestShouldFallbackByStatusPolicy(t *testing.T) {
 	cases := []struct {
@@ -35,5 +39,12 @@ func TestShouldFallbackOnInvalidResponse(t *testing.T) {
 	}
 	if !ShouldFallback(err) {
 		t.Fatalf("invalid response must trigger fallback")
+	}
+}
+
+func TestValidateProviderDoesNotRequireName(t *testing.T) {
+	provider := config.ProviderConfig{APIKey: "key", BaseURL: "https://example.com/v1", Model: "model"}
+	if err := validateProvider(provider); err != nil {
+		t.Fatalf("provider without a name must be valid: %v", err)
 	}
 }

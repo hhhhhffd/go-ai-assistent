@@ -28,8 +28,10 @@ type SettingsBot struct {
 	client   *http.Client
 	baseURL  string
 
-	pendingMu sync.Mutex
-	pending   map[int64]string
+	pendingMu  sync.Mutex
+	pending    map[int64]string
+	navMu      sync.Mutex
+	navigation map[int64][]string
 }
 
 type botUpdate struct {
@@ -78,13 +80,14 @@ type botAPIResponse[T any] struct {
 
 func NewSettingsBot(cfg config.TelegramConfig, settings SettingsExecutor, logger *slog.Logger) *SettingsBot {
 	return &SettingsBot{
-		token:    cfg.BotToken,
-		ownerID:  cfg.OwnerID,
-		settings: settings,
-		logger:   logger,
-		client:   &http.Client{Timeout: 35 * time.Second},
-		baseURL:  telegramAPIBaseURL,
-		pending:  make(map[int64]string),
+		token:      cfg.BotToken,
+		ownerID:    cfg.OwnerID,
+		settings:   settings,
+		logger:     logger,
+		client:     &http.Client{Timeout: 35 * time.Second},
+		baseURL:    telegramAPIBaseURL,
+		pending:    make(map[int64]string),
+		navigation: make(map[int64][]string),
 	}
 }
 
@@ -133,6 +136,7 @@ func (b *SettingsBot) handleMessage(ctx context.Context, message *botMessage) {
 	text := strings.TrimSpace(message.Text)
 	if text == "/settings" || text == "/start" {
 		b.clearPending(message.Chat.ID)
+		b.resetNavigation(message.Chat.ID)
 		if err := b.showPanel(ctx, message.Chat.ID, 0, panelMain()); err != nil {
 			b.logger.Error("show settings panel", "error", err)
 		}
@@ -164,7 +168,7 @@ func (b *SettingsBot) handleMessage(ctx context.Context, message *botMessage) {
 	}
 
 	if text == "/cancel" {
-		if err := b.sendPanel(ctx, message.Chat.ID, panelMain()); err != nil {
+		if err := b.sendPanel(ctx, message.Chat.ID, b.panelForAction(b.currentAction(message.Chat.ID))); err != nil {
 			b.logger.Error("cancel settings edit", "error", err)
 		}
 		return
@@ -189,8 +193,18 @@ func (b *SettingsBot) handleCallback(ctx context.Context, callback *botCallbackQ
 	chatID := callback.Message.Chat.ID
 	messageID := callback.Message.MessageID
 	action := callback.Data
-	if action == "settings:main" {
+	if action == "settings:back" {
+		if err := b.showPanel(ctx, chatID, messageID, b.panelForAction(b.back(chatID))); err != nil {
+			b.logger.Error("show previous settings panel", "error", err)
+		}
+		return
+	}
+	if action == "settings:current" || action == "settings:cancel" {
 		b.clearPending(chatID)
+		if err := b.showPanel(ctx, chatID, messageID, b.panelForAction(b.currentAction(chatID))); err != nil {
+			b.logger.Error("show current settings panel", "error", err)
+		}
+		return
 	}
 	if prefix, prompt, ok := editAction(action); ok {
 		b.setPending(chatID, prefix)
@@ -203,22 +217,6 @@ func (b *SettingsBot) handleCallback(ctx context.Context, callback *botCallbackQ
 
 	var panel settingsPanel
 	switch action {
-	case "settings:main":
-		panel = panelMain()
-	case "settings:ai":
-		panel = panelAI(b.settings.Execute("/settings config"))
-	case "settings:primary":
-		panel = panelProvider("Основной провайдер", "primary", b.privateProvidersView())
-	case "settings:fallback":
-		panel = panelProvider("Резервный провайдер", "fallback", b.privateProvidersView())
-	case "settings:limits":
-		panel = panelLimits(b.settings.Execute("/settings config"))
-	case "settings:access":
-		panel = panelAccess(b.settings.Execute("/settings config"))
-	case "settings:runtime":
-		panel = panelRuntime(b.settings.Execute("/settings config"))
-	case "settings:help":
-		panel = panelHelp()
 	case "settings:set:telegram:on":
 		panel = panelResult(b.settings.Execute("/settings set config telegram enabled true"))
 	case "settings:set:telegram:off":
@@ -232,7 +230,8 @@ func (b *SettingsBot) handleCallback(ctx context.Context, callback *botCallbackQ
 	case "settings:set:log:info":
 		panel = panelResult(b.settings.Execute("/settings set config app log_level info"))
 	default:
-		panel = panelMain()
+		b.navigate(chatID, action)
+		panel = b.panelForAction(action)
 	}
 	if err := b.showPanel(ctx, chatID, messageID, panel); err != nil {
 		b.logger.Error("show settings panel", "error", err)
@@ -262,12 +261,10 @@ func editAction(action string) (prefix, prompt string, ok bool) {
 		prefix string
 		prompt string
 	}{
-		"settings:edit:primary:name":              {"/settings set primary name", "Введите название основного провайдера."},
-		"settings:edit:primary:api_key":           {"/settings set primary api_key", "Введите API key основного провайдера. Он останется в истории личного чата."},
+		"settings:edit:primary:api_key":           {"/settings set primary api_key", "Введите API key основного провайдера. После приёма бот удалит это сообщение."},
 		"settings:edit:primary:base_url":          {"/settings set primary base_url", "Введите base URL основного провайдера."},
 		"settings:edit:primary:model":             {"/settings set primary model", "Введите модель основного провайдера."},
-		"settings:edit:fallback:name":             {"/settings set fallback name", "Введите название резервного провайдера."},
-		"settings:edit:fallback:api_key":          {"/settings set fallback api_key", "Введите API key резервного провайдера. Он останется в истории личного чата."},
+		"settings:edit:fallback:api_key":          {"/settings set fallback api_key", "Введите API key резервного провайдера. После приёма бот удалит это сообщение."},
 		"settings:edit:fallback:base_url":         {"/settings set fallback base_url", "Введите base URL резервного провайдера."},
 		"settings:edit:fallback:model":            {"/settings set fallback model", "Введите модель резервного провайдера."},
 		"settings:edit:ai:system_prompt":          {"/settings set config ai system_prompt", "Введите основной системный промпт."},
@@ -309,6 +306,48 @@ func (b *SettingsBot) clearPending(chatID int64) {
 	b.pendingMu.Lock()
 	defer b.pendingMu.Unlock()
 	delete(b.pending, chatID)
+}
+
+func (b *SettingsBot) resetNavigation(chatID int64) {
+	b.navMu.Lock()
+	defer b.navMu.Unlock()
+	b.navigation[chatID] = []string{"settings:main"}
+}
+
+func (b *SettingsBot) navigate(chatID int64, action string) {
+	b.navMu.Lock()
+	defer b.navMu.Unlock()
+	history := b.navigation[chatID]
+	if len(history) == 0 {
+		history = []string{"settings:main"}
+	}
+	if history[len(history)-1] != action {
+		history = append(history, action)
+	}
+	b.navigation[chatID] = history
+}
+
+func (b *SettingsBot) currentAction(chatID int64) string {
+	b.navMu.Lock()
+	defer b.navMu.Unlock()
+	history := b.navigation[chatID]
+	if len(history) == 0 {
+		return "settings:main"
+	}
+	return history[len(history)-1]
+}
+
+func (b *SettingsBot) back(chatID int64) string {
+	b.navMu.Lock()
+	defer b.navMu.Unlock()
+	history := b.navigation[chatID]
+	if len(history) <= 1 {
+		b.navigation[chatID] = []string{"settings:main"}
+		return "settings:main"
+	}
+	history = history[:len(history)-1]
+	b.navigation[chatID] = history
+	return history[len(history)-1]
 }
 
 func (b *SettingsBot) updates(ctx context.Context, offset int64) ([]botUpdate, error) {
@@ -395,45 +434,85 @@ type settingsPanel struct {
 	keyboard inlineKeyboard
 }
 
-func panelMain() settingsPanel {
-	return settingsPanel{
-		text: "Панель управления\n\nВыберите раздел. Подробные настройки доступны только в этом личном чате.",
-		keyboard: keyboard(
-			row("🧠 AI", "settings:ai"),
-			row("🔌 Основной", "settings:primary"),
-			row("🛟 Резервный", "settings:fallback"),
-			row("⏱ Лимиты", "settings:limits"),
-			row("👥 Доступ", "settings:access"),
-			row("⚙️ Runtime", "settings:runtime"),
-			row("❔ Подсказки", "settings:help"),
-		),
+func (b *SettingsBot) panelForAction(action string) settingsPanel {
+	switch action {
+	case "settings:ai":
+		return panelAI(b.settings.Execute("/settings config"))
+	case "settings:primary":
+		return panelProvider("Основной провайдер", "primary", b.privateProvidersView())
+	case "settings:fallback":
+		return panelProvider("Резервный провайдер", "fallback", b.privateProvidersView())
+	case "settings:prompts":
+		return panelPrompts()
+	case "settings:behavior":
+		return panelBehavior()
+	case "settings:bot":
+		return panelBot()
+	case "settings:limits":
+		return panelLimits(b.settings.Execute("/settings config"))
+	case "settings:access":
+		return panelAccess(b.settings.Execute("/settings config"))
+	case "settings:runtime":
+		return panelRuntime(b.settings.Execute("/settings config"))
+	case "settings:help":
+		return panelHelp()
+	default:
+		return panelMain()
 	}
+}
+
+func panelMain() settingsPanel {
+	return settingsPanel{text: "Панель управления", keyboard: keyboard(
+		row("🧠 AI", "settings:ai"),
+		row("⚙️ Бот", "settings:bot"),
+		row("❔ Подсказки", "settings:help"),
+	)}
 }
 
 func panelAI(status string) settingsPanel {
 	return settingsPanel{text: "🧠 AI\n\n" + status, keyboard: keyboard(
-		row("Системный промпт", "settings:edit:ai:system_prompt"),
-		row("Deep-промпт", "settings:edit:ai:deep_system_prompt"),
-		row("Токены", "settings:edit:ai:max_output_tokens", "Deep токены", "settings:edit:ai:deep_max_output_tokens"),
-		row("Температура", "settings:edit:ai:temperature", "Timeout", "settings:edit:ai:request_timeout"),
-		row("← Назад", "settings:main"),
+		row("Основной", "settings:primary", "Резервный", "settings:fallback"),
+		row("Промпты", "settings:prompts", "Поведение", "settings:behavior"),
+		row("← Назад", "settings:back"),
 	)}
 }
 
 func panelProvider(title, slot, status string) settingsPanel {
 	return settingsPanel{text: "🔌 " + title + "\n\n" + status, keyboard: keyboard(
-		row("Название", "settings:edit:"+slot+":name", "Модель", "settings:edit:"+slot+":model"),
-		row("Base URL", "settings:edit:"+slot+":base_url"),
+		row("Модель", "settings:edit:"+slot+":model", "Base URL", "settings:edit:"+slot+":base_url"),
 		row("API key", "settings:edit:"+slot+":api_key"),
-		row("← Назад", "settings:main"),
+		row("← Назад", "settings:back"),
+	)}
+}
+
+func panelPrompts() settingsPanel {
+	return settingsPanel{text: "📝 Промпты", keyboard: keyboard(
+		row("Обычный", "settings:edit:ai:system_prompt", "Deep", "settings:edit:ai:deep_system_prompt"),
+		row("← Назад", "settings:back"),
+	)}
+}
+
+func panelBehavior() settingsPanel {
+	return settingsPanel{text: "🎛 Поведение AI", keyboard: keyboard(
+		row("Токены", "settings:edit:ai:max_output_tokens", "Deep токены", "settings:edit:ai:deep_max_output_tokens"),
+		row("Температура", "settings:edit:ai:temperature", "Timeout", "settings:edit:ai:request_timeout"),
+		row("← Назад", "settings:back"),
+	)}
+}
+
+func panelBot() settingsPanel {
+	return settingsPanel{text: "⚙️ Бот", keyboard: keyboard(
+		row("Доступ", "settings:access", "Лимиты", "settings:limits"),
+		row("Runtime", "settings:runtime"),
+		row("← Назад", "settings:back"),
 	)}
 }
 
 func panelLimits(status string) settingsPanel {
-	return settingsPanel{text: "⏱ Rate limit\n\n" + status, keyboard: keyboard(
+	return settingsPanel{text: "⏱ Лимиты\n\n" + status, keyboard: keyboard(
 		row("На пользователя", "settings:edit:limits:per_user"),
 		row("Общий", "settings:edit:limits:global", "Окно", "settings:edit:limits:window"),
-		row("← Назад", "settings:main"),
+		row("← Назад", "settings:back"),
 	)}
 }
 
@@ -441,7 +520,7 @@ func panelAccess(status string) settingsPanel {
 	return settingsPanel{text: "👥 Доступ\n\n" + status, keyboard: keyboard(
 		row("+ Telegram", "settings:access:add:telegram", "− Telegram", "settings:access:remove:telegram"),
 		row("+ Discord", "settings:access:add:discord", "− Discord", "settings:access:remove:discord"),
-		row("← Назад", "settings:main"),
+		row("← Назад", "settings:back"),
 	)}
 }
 
@@ -450,20 +529,20 @@ func panelRuntime(status string) settingsPanel {
 		row("Telegram вкл.", "settings:set:telegram:on", "выкл.", "settings:set:telegram:off"),
 		row("Discord вкл.", "settings:set:discord:on", "выкл.", "settings:set:discord:off"),
 		row("Логи debug", "settings:set:log:debug", "Логи info", "settings:set:log:info"),
-		row("← Назад", "settings:main"),
+		row("← Назад", "settings:back"),
 	)}
 }
 
 func panelHelp() settingsPanel {
-	return settingsPanel{text: "❔ Как пользоваться\n\n• /settings — открыть панель.\n• Нажмите кнопку поля, затем отправьте новое значение.\n• /cancel — отменить ввод.\n• В любом Guest Mode чате: @bot /settings подскажет, что панель находится в личном чате.\n\nAPI key показывается и меняется только здесь, в личном чате owner.", keyboard: keyboard(row("← В панель", "settings:main"))}
+	return settingsPanel{text: "❔ Как пользоваться\n\n• /settings — открыть панель.\n• Нажмите поле и отправьте новое значение.\n• /cancel — отменить ввод.\n• В Guest Mode: @bot /settings подскажет, что панель находится в личном чате.\n\nAPI key меняется только в личном чате owner и после приёма удаляется.", keyboard: keyboard(row("← Назад", "settings:back"))}
 }
 
 func panelInput(prompt string) settingsPanel {
-	return settingsPanel{text: prompt + "\n\nДля отмены отправьте /cancel.", keyboard: keyboard(row("Отмена", "settings:main"))}
+	return settingsPanel{text: prompt + "\n\nДля отмены отправьте /cancel.", keyboard: keyboard(row("Отмена", "settings:cancel"))}
 }
 
 func panelResult(result string) settingsPanel {
-	return settingsPanel{text: result, keyboard: keyboard(row("← В панель", "settings:main"))}
+	return settingsPanel{text: result, keyboard: keyboard(row("← Назад", "settings:current"))}
 }
 
 func keyboard(rows ...[]inlineButton) inlineKeyboard { return inlineKeyboard{InlineKeyboard: rows} }

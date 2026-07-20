@@ -72,8 +72,6 @@ func (s *Service) Execute(input string) string {
 		return "Провайдер: primary или fallback."
 	}
 	switch field {
-	case "name":
-		provider.Name = value
 	case "api_key":
 		provider.APIKey = value
 	case "base_url":
@@ -81,7 +79,7 @@ func (s *Service) Execute(input string) string {
 	case "model":
 		provider.Model = value
 	default:
-		return "Поле: name, api_key, base_url или model."
+		return "Поле: api_key, base_url или model."
 	}
 	if err := config.SaveProviders(s.providers); err != nil {
 		return fmt.Sprintf("Не удалось сохранить providers.yaml: %v", err)
@@ -245,7 +243,7 @@ func (s *Service) providersView() string {
 	return s.providersViewLocked()
 }
 func (s *Service) providersViewLocked() string {
-	return fmt.Sprintf("Провайдеры:\nprimary: name=%q, base_url=%q, model=%q, api_key=%s\nfallback: name=%q, base_url=%q, model=%q, api_key=%s", s.providers.Primary.Name, s.providers.Primary.BaseURL, s.providers.Primary.Model, secretState(s.providers.Primary.APIKey), s.providers.Fallback.Name, s.providers.Fallback.BaseURL, s.providers.Fallback.Model, secretState(s.providers.Fallback.APIKey))
+	return fmt.Sprintf("Провайдеры:\nprimary: base_url=%q, model=%q, api_key=%s\nfallback: base_url=%q, model=%q, api_key=%s", s.providers.Primary.BaseURL, s.providers.Primary.Model, secretState(s.providers.Primary.APIKey), s.providers.Fallback.BaseURL, s.providers.Fallback.Model, secretState(s.providers.Fallback.APIKey))
 }
 
 func (s *Service) configView() string {
@@ -274,5 +272,5 @@ func secretState(value string) string {
 	return "задан"
 }
 func (s *Service) help() string {
-	return "Настройки:\n/settings providers\n/settings config\n/settings set primary name|api_key|base_url|model <значение>\n/settings set fallback name|api_key|base_url|model <значение>\n/settings set config ai system_prompt|deep_system_prompt|max_output_tokens|deep_max_output_tokens|temperature|request_timeout <значение>\n/settings set config rate_limit per_user|global|window <значение>\n/settings set config telegram|discord enabled true|false\n/settings allow|deny telegram|discord <id>\nКлючи никогда не показываются в ответах."
+	return "Настройки:\n/settings providers\n/settings config\n/settings set primary api_key|base_url|model <значение>\n/settings set fallback api_key|base_url|model <значение>\n/settings set config ai system_prompt|deep_system_prompt|max_output_tokens|deep_max_output_tokens|temperature|request_timeout <значение>\n/settings set config rate_limit per_user|global|window <значение>\n/settings set config telegram|discord enabled true|false\n/settings allow|deny telegram|discord <id>\nКлючи никогда не показываются в ответах."
 }

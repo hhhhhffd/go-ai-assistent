@@ -71,7 +71,7 @@ remote_stage="/tmp/${app_name}-deploy-$$"
 ssh "$target" "mkdir -p '$remote_stage'"
 scp "$artifact" "$env_file" "$unit_file" "$config_file" "$providers_file" "$target:$remote_stage/"
 
-ssh -tt "$target" bash -s -- \
+ssh "$target" bash -s -- \
 	"$remote_stage" \
 	"$remote_app_dir" \
 	"$remote_state_dir" \

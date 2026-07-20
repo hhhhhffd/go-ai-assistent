@@ -9,13 +9,16 @@ User=bot
 Group=bot
 WorkingDirectory=/opt/go-ai-assistant
 EnvironmentFile=/opt/go-ai-assistant/.env
+Environment=CONFIG_DIR=/var/lib/go-ai-assistant
 ExecStart=/usr/local/bin/go-ai-assistant
 Restart=always
 RestartSec=5
+UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
+StateDirectory=go-ai-assistant
 LimitNOFILE=65535
 
 [Install]

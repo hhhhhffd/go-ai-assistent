@@ -105,10 +105,10 @@ func (s *Service) handleGuestQuery(ctx context.Context, update *tg.UpdateBotGues
 		return s.reply(ctx, update.QueryID, "Панель настроек доступна только owner в личном чате с ботом. Откройте диалог с ботом и отправьте /settings.")
 	}
 
-	request := assistant.Request{Question: question}
 	if references, exists := update.GetReferenceMessages(); exists {
-		request.PreviousAnswer = firstMessageText(references)
+		question = questionWithReplyContext(question, firstMessageText(references))
 	}
+	request := assistant.Request{Question: question}
 
 	metrics.TelegramGuests.Add(1)
 	metrics.AIRequests.Add(1)
@@ -164,6 +164,19 @@ func firstMessageText(messages []tg.MessageClass) string {
 		}
 	}
 	return ""
+}
+
+func questionWithReplyContext(question string, replyText string) string {
+	replyText = strings.TrimSpace(replyText)
+	if replyText == "" {
+		return question
+	}
+
+	return fmt.Sprintf(
+		"Сообщение, на которое пользователь ответил:\n---\n%s\n---\n\nЗапрос пользователя:\n%s",
+		replyText,
+		question,
+	)
 }
 
 func truncateRunes(text string, limit int) string {

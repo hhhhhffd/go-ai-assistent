@@ -23,6 +23,21 @@ func TestFirstMessageText(t *testing.T) {
 	}
 }
 
+func TestQuestionWithReplyContext(t *testing.T) {
+	question := questionWithReplyContext("переведи это", "  Hello world  ")
+	want := "Сообщение, на которое пользователь ответил:\n---\nHello world\n---\n\nЗапрос пользователя:\nпереведи это"
+	if question != want {
+		t.Fatalf("unexpected question: %q", question)
+	}
+}
+
+func TestQuestionWithReplyContextWithoutText(t *testing.T) {
+	question := questionWithReplyContext("переведи это", " \t ")
+	if question != "переведи это" {
+		t.Fatalf("unexpected question without reply text: %q", question)
+	}
+}
+
 func TestTruncateRunes(t *testing.T) {
 	text := truncateRunes("абвг", 3)
 	if text != "аб…" {
